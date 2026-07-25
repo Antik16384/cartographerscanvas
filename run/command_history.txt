@@ -1,0 +1,5 @@
+/time set noon
+/gamerule advance_time false
+/time set noon
+/gamerule advance_weather false
+/weather clear

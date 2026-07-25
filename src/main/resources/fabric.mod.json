@@ -1,0 +1,27 @@
+{
+	"schemaVersion": 1,
+	"id": "cartographerscanvas",
+	"version": "${version}",
+	"name": "Cartographer's Canvas",
+	"description": "Fully customizable minimap.",
+	"authors": [
+		"Antik16384"
+	],
+	"contact": {
+		"sources": "https://github.com/Antik16384/cartographerscanvas"
+	},
+	"license": "MIT",
+	"icon": "assets/cartographerscanvas/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"client": [
+			"net.antik16384.cartographerscanvas.CartographersCanvas"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.18.1",
+		"minecraft": "~1.21.11",
+		"java": ">=21",
+		"fabric-api": "*"
+	}
+}
