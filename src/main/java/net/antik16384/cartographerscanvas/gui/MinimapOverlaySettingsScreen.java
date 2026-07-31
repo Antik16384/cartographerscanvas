@@ -32,7 +32,7 @@ public class MinimapOverlaySettingsScreen extends Screen {
 	private int resizeAnchorY;
 
 	public MinimapOverlaySettingsScreen() {
-		super(Text.literal("Minimap Einstellungen"));
+		super(Text.literal("Overlay Settings"));
 
 		this.previewImage = new NativeImage(MinimapData.CANVAS_WIDTH, MinimapData.CANVAS_HEIGHT, true);
 		this.previewTexture = new NativeImageBackedTexture(() -> "cartographerscanvas_overlay_preview", previewImage);
@@ -54,7 +54,7 @@ public class MinimapOverlaySettingsScreen extends Screen {
 		}).dimensions(10, 10, 130, 20).build();
 		addDrawableChild(shapeButton);
 
-		ButtonWidget resetButton = ButtonWidget.builder(Text.literal("Zuruecksetzen"), b -> {
+		ButtonWidget resetButton = ButtonWidget.builder(Text.literal("Reset"), b -> {
 			MinimapOverlayConfig config = MinimapOverlayConfig.INSTANCE;
 			config.anchorXFraction = 1f;
 			config.anchorYFraction = 0f;
@@ -68,7 +68,7 @@ public class MinimapOverlaySettingsScreen extends Screen {
 
 	private String shapeLabel() {
 		boolean round = MinimapOverlayConfig.INSTANCE.shape == MinimapOverlayConfig.Shape.ROUND;
-		return "Form: " + (round ? "Rund" : "Quadrat");
+		return "Shape: " + (round ? "Circle" : "Square");
 	}
 
 	private int[] currentBox() {
@@ -92,21 +92,56 @@ public class MinimapOverlaySettingsScreen extends Screen {
 		int size = box[2];
 
 		if (config.shape == MinimapOverlayConfig.Shape.SQUARE) {
-			context.fill(x - 1, y - 1, x + size + 1, y + size + 1, 0xFF55CCFF);
+			context.fill(x - 2, y - 2, x + size + 2, y + size + 2, 0xFF808080);
 		}
 
 		context.drawTexture(RenderPipelines.GUI_TEXTURED, previewTextureId,
-				x, y, 0f, 0f, size, size,
+				x, y, 0f, 0f,
+				size, size,
+				MinimapData.CANVAS_WIDTH, MinimapData.CANVAS_HEIGHT,
 				MinimapData.CANVAS_WIDTH, MinimapData.CANVAS_HEIGHT);
 
 		int handleX = x + size - HANDLE_SIZE;
 		int handleY = y + size - HANDLE_SIZE;
-		context.fill(handleX, handleY, handleX + HANDLE_SIZE, handleY + HANDLE_SIZE, 0xFF55CCFF);
-		context.fill(handleX + 1, handleY + 1, handleX + HANDLE_SIZE - 1, handleY + HANDLE_SIZE - 1, 0xFF000000);
+		drawResizeHandle(context, handleX, handleY, HANDLE_SIZE);
 
 		context.drawText(textRenderer,
-				Text.literal("Ziehen zum Verschieben, Ecke unten rechts ziehen zum Skalieren"),
+				Text.literal("Drag to move, drag corner to scale"),
 				10, 62, 0xFFFFFFFF, true);
+	}
+
+	private void drawResizeHandle(DrawContext context, int handleX, int handleY, int handleSize) {
+		int backdrop = 0xFF303030;
+		int iconColor = 0xFFFFFFFF;
+
+		context.fill(handleX, handleY, handleX + handleSize, handleY + handleSize, backdrop);
+
+		int pad = 3;
+		int x1 = handleX + pad;
+		int y1 = handleY + pad;
+		int x2 = handleX + handleSize - pad;
+		int y2 = handleY + handleSize - pad;
+
+		drawPixelLine(context, x1, y1, x2, y2, iconColor);
+
+		drawPixelLine(context, x1, y1, x1 + 3, y1, iconColor);
+		drawPixelLine(context, x1, y1, x1, y1 + 3, iconColor);
+
+		drawPixelLine(context, x2, y2, x2 - 3, y2, iconColor);
+		drawPixelLine(context, x2, y2, x2, y2 - 3, iconColor);
+	}
+
+	private void drawPixelLine(DrawContext context, int x1, int y1, int x2, int y2, int color) {
+		int steps = Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+		if (steps == 0) {
+			context.fill(x1, y1, x1 + 1, y1 + 1, color);
+			return;
+		}
+		for (int i = 0; i <= steps; i++) {
+			int px = x1 + (x2 - x1) * i / steps;
+			int py = y1 + (y2 - y1) * i / steps;
+			context.fill(px, py, px + 1, py + 1, color);
+		}
 	}
 
 	private void syncPreviewTexture(MinimapOverlayConfig.Shape shape) {
@@ -115,22 +150,36 @@ public class MinimapOverlaySettingsScreen extends Screen {
 		int h = MinimapData.CANVAS_HEIGHT;
 		float cx = w / 2f;
 		float cy = h / 2f;
-		float radius = Math.min(w, h) / 2f;
+		float innerRadius = Math.min(w, h) / 2f - 2f;
+		float outerRadius = Math.min(w, h) / 2f;
 
 		for (int py = 0; py < h; py++) {
 			for (int px = 0; px < w; px++) {
-				int argb = data.compositePixel(px, py);
+				int argb = toOpaqueColor(data.compositePixel(px, py));
+
 				if (shape == MinimapOverlayConfig.Shape.ROUND) {
 					float dx = px + 0.5f - cx;
 					float dy = py + 0.5f - cy;
-					if (dx * dx + dy * dy > radius * radius) {
-						argb &= 0x00FFFFFF;
+					float distSq = dx * dx + dy * dy;
+					if (distSq > outerRadius * outerRadius) {
+						argb = 0;
+					} else if (distSq > innerRadius * innerRadius) {
+						argb = 0xFF808080;
 					}
 				}
+
 				previewImage.setColor(px, py, toNativeImageColor(argb));
 			}
 		}
 		previewTexture.upload();
+	}
+
+	private static int toOpaqueColor(int argb) {
+		int a = (argb >>> 24) & 0xFF;
+		if (a == 0) {
+			return 0xFFFFFFFF;
+		}
+		return argb | 0xFF000000;
 	}
 
 	private static int toNativeImageColor(int argb) {
@@ -153,18 +202,21 @@ public class MinimapOverlaySettingsScreen extends Screen {
 			int handleY = y + size - HANDLE_SIZE;
 			int handlePad = 4;
 
-			if (click.x() >= handleX - handlePad && click.x() < handleX + HANDLE_SIZE + handlePad
-					&& click.y() >= handleY - handlePad && click.y() < handleY + HANDLE_SIZE + handlePad) {
+			double mouseX = click.x();
+			double mouseY = click.y();
+
+			if (mouseX >= handleX - handlePad && mouseX < handleX + HANDLE_SIZE + handlePad
+					&& mouseY >= handleY - handlePad && mouseY < handleY + HANDLE_SIZE + handlePad) {
 				resizing = true;
 				resizeAnchorX = x;
 				resizeAnchorY = y;
 				return true;
 			}
 
-			if (click.x() >= x && click.x() < x + size && click.y() >= y && click.y() < y + size) {
+			if (mouseX >= x && mouseX < x + size && mouseY >= y && mouseY < y + size) {
 				dragging = true;
-				dragOffsetX = (int) Math.round(click.x() - x);
-				dragOffsetY = (int) Math.round(click.y() - y);
+				dragOffsetX = (int) Math.round(mouseX - x);
+				dragOffsetY = (int) Math.round(mouseY - y);
 				return true;
 			}
 		}

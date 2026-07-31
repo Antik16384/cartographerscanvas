@@ -19,7 +19,12 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.math.MathHelper;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWScrollCallback;
+import org.lwjgl.util.tinyfd.TinyFileDialogs;
 
+import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -157,6 +162,15 @@ public class MinimapScreen extends Screen {
 	private ColorSlider alphaSlider;
 	private TextFieldWidget hexField;
 
+	private ButtonWidget exportPngButton;
+	private ButtonWidget importPngButton;
+	private ButtonWidget exportProjectButton;
+	private ButtonWidget importProjectButton;
+	private long exportPngFeedbackUntil = 0L;
+	private long importPngFeedbackUntil = 0L;
+	private long exportProjectFeedbackUntil = 0L;
+	private long importProjectFeedbackUntil = 0L;
+
 	public MinimapScreen() {
 		super(Text.literal("Cartographer's Canvas"));
 
@@ -213,7 +227,6 @@ public class MinimapScreen extends Screen {
 		int maxScaleByHeight = Math.max(1, (height - marginTop - bottomMargin) / CANVAS_HEIGHT);
 		pixelScale = Math.max(1, Math.min(6, Math.min(maxScaleByWidth, maxScaleByHeight)));
 
-		// Beide Seiten bekommen die GLEICHE reservierte Breite (LEFT_COLUMN_WIDTH), damit die Canvas wirklich zentriert ist
 		int totalContentWidth = LEFT_COLUMN_WIDTH + SIDE_CANVAS_GAP + CANVAS_WIDTH * pixelScale
 				+ SIDE_CANVAS_GAP + LEFT_COLUMN_WIDTH;
 		int contentStartX = (width - totalContentWidth) / 2;
@@ -319,7 +332,7 @@ public class MinimapScreen extends Screen {
 		toolButtons = new ButtonWidget[5];
 		toolButtonTools = new Tool[5];
 
-		String[] leftLabels = {"Stift", "Radierer", "Eimer"};
+		String[] leftLabels = {"Pencil", "Eraser", "Paint Bucket"};
 		Tool[] leftTools = {Tool.PEN, Tool.ERASER, Tool.FILL};
 
 		for (int i = 0; i < 3; i++) {
@@ -356,7 +369,7 @@ public class MinimapScreen extends Screen {
 		addLeftWidget(shapeSelectButton);
 
 		int selectY = startY + (SIDE_BUTTON_HEIGHT + SIDE_BUTTON_GAP);
-		ButtonWidget selectButton = ButtonWidget.builder(Text.literal("Auswahl"), b -> {
+		ButtonWidget selectButton = ButtonWidget.builder(Text.literal("Select"), b -> {
 			if (currentTool == Tool.SELECT) {
 				clearSelection();
 			}
@@ -370,7 +383,7 @@ public class MinimapScreen extends Screen {
 		toolButtonTools[3] = Tool.SELECT;
 
 		int eyedropperY = startY + 2 * (SIDE_BUTTON_HEIGHT + SIDE_BUTTON_GAP);
-		ButtonWidget eyedropperButton = ButtonWidget.builder(Text.literal("Pipette"), b -> {
+		ButtonWidget eyedropperButton = ButtonWidget.builder(Text.literal("Color Picker"), b -> {
 			currentTool = Tool.EYEDROPPER;
 			clearArmed = false;
 			resetClearButtonLabel();
@@ -410,19 +423,19 @@ public class MinimapScreen extends Screen {
 
 	private String shapeLabel(Tool t) {
 		return switch (t) {
-			case RECTANGLE -> "Rechteck";
-			case CIRCLE -> "Kreis";
-			default -> "Linie";
+			case RECTANGLE -> "Rectangle";
+			case CIRCLE -> "Circle";
+			default -> "Line";
 		};
 	}
 
 	private void initSideActions(int x, int startY) {
 		int buttonX = x + (LEFT_COLUMN_WIDTH - SIDE_BUTTON_WIDTH) / 2;
 
-		clearButton = ButtonWidget.builder(Text.literal("Ebene leeren"), b -> {
+		clearButton = ButtonWidget.builder(Text.literal("Clear layer"), b -> {
 			if (!clearArmed) {
 				clearArmed = true;
-				clearButton.setMessage(Text.literal("Sicher? Klick!"));
+				clearButton.setMessage(Text.literal("Confirm"));
 			} else {
 				clearCanvas();
 				clearArmed = false;
@@ -430,18 +443,18 @@ public class MinimapScreen extends Screen {
 			}
 		}).dimensions(buttonX, startY, SIDE_BUTTON_WIDTH, SIDE_BUTTON_HEIGHT).build();
 
-		resetButton = ButtonWidget.builder(Text.literal("Canvas leeren"), b -> {
+		resetButton = ButtonWidget.builder(Text.literal("Clear canvas"), b -> {
 			if (!resetArmed) {
 				resetArmed = true;
-				resetButton.setMessage(Text.literal("Sicher? Klick!"));
+				resetButton.setMessage(Text.literal("Confirm"));
 			} else {
 				resetProject();
 			}
 		}).dimensions(buttonX, startY + SIDE_BUTTON_HEIGHT + SIDE_BUTTON_GAP, SIDE_BUTTON_WIDTH, SIDE_BUTTON_HEIGHT).build();
 
-		saveButton = ButtonWidget.builder(Text.literal("Speichern"), b -> {
+		saveButton = ButtonWidget.builder(Text.literal("Save"), b -> {
 			saveToDisk();
-			saveButton.setMessage(Text.literal("Gespeichert!"));
+			saveButton.setMessage(Text.literal("Saved!"));
 			saveFeedbackUntil = System.currentTimeMillis() + 1500;
 			clearArmed = false;
 			resetClearButtonLabel();
@@ -452,19 +465,145 @@ public class MinimapScreen extends Screen {
 		addRightWidget(saveButton);
 
 		int layerPanelY = startY + (SIDE_BUTTON_HEIGHT + SIDE_BUTTON_GAP) * 3 + 6;
-		initLayerPanel(x, layerPanelY);
+		int afterLayers = initLayerPanel(x, layerPanelY);
+		initImportExportPanel(x, afterLayers + 10);
 	}
 
-	private void initLayerPanel(int x, int startY) {
+	private void initImportExportPanel(int x, int startY) {
 		int cursorY = startY;
 
-		ButtonWidget addButton = ButtonWidget.builder(Text.literal("+ Ebene"), b -> addLayer())
+		exportPngButton = ButtonWidget.builder(Text.literal("Export as PNG..."), b -> exportPng())
+				.dimensions(x, cursorY, LEFT_COLUMN_WIDTH, SIDE_BUTTON_HEIGHT).build();
+		addRightWidget(exportPngButton);
+		cursorY += SIDE_BUTTON_HEIGHT + SIDE_BUTTON_GAP;
+
+		importPngButton = ButtonWidget.builder(Text.literal("Import PNG..."), b -> importPng())
+				.dimensions(x, cursorY, LEFT_COLUMN_WIDTH, SIDE_BUTTON_HEIGHT).build();
+		addRightWidget(importPngButton);
+		cursorY += SIDE_BUTTON_HEIGHT + SIDE_BUTTON_GAP;
+
+		exportProjectButton = ButtonWidget.builder(Text.literal("Export project..."), b -> exportProject())
+				.dimensions(x, cursorY, LEFT_COLUMN_WIDTH, SIDE_BUTTON_HEIGHT).build();
+		addRightWidget(exportProjectButton);
+		cursorY += SIDE_BUTTON_HEIGHT + SIDE_BUTTON_GAP;
+
+		importProjectButton = ButtonWidget.builder(Text.literal("Import project..."), b -> importProject())
+				.dimensions(x, cursorY, LEFT_COLUMN_WIDTH, SIDE_BUTTON_HEIGHT).build();
+		addRightWidget(importProjectButton);
+	}
+
+	private void openSaveDialog(String title, String defaultPathAndFile, String[] filterPatterns, String filterDescription, java.util.function.Consumer<Path> onChosen) {
+		Thread thread = new Thread(() -> {
+			String result;
+			try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+				org.lwjgl.PointerBuffer filters = stack.mallocPointer(filterPatterns.length);
+				for (String pattern : filterPatterns) {
+					filters.put(stack.UTF8(pattern));
+				}
+				filters.flip();
+				result = TinyFileDialogs.tinyfd_saveFileDialog(title, defaultPathAndFile, filters, filterDescription);
+			}
+			if (result == null) return;
+			Path path = Path.of(result);
+			MinecraftClient.getInstance().execute(() -> onChosen.accept(path));
+		}, "cartographerscanvas-save-dialog");
+		thread.setDaemon(true);
+		thread.start();
+	}
+
+	private void openLoadDialog(String title, String defaultPathAndFile, String[] filterPatterns, String filterDescription, java.util.function.Consumer<Path> onChosen) {
+		Thread thread = new Thread(() -> {
+			String result;
+			try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+				org.lwjgl.PointerBuffer filters = stack.mallocPointer(filterPatterns.length);
+				for (String pattern : filterPatterns) {
+					filters.put(stack.UTF8(pattern));
+				}
+				filters.flip();
+				result = TinyFileDialogs.tinyfd_openFileDialog(title, defaultPathAndFile, filters, filterDescription, false);
+			}
+			if (result == null) return;
+			Path path = Path.of(result);
+			MinecraftClient.getInstance().execute(() -> onChosen.accept(path));
+		}, "cartographerscanvas-open-dialog");
+		thread.setDaemon(true);
+		thread.start();
+	}
+
+	private void exportPng() {
+		String defaultPath = MinimapData.INSTANCE.exportsDir().resolve("map.png").toString();
+		openSaveDialog("Export as PNG", defaultPath, new String[]{"*.png"}, "PNG (*.png)", path -> {
+			Path finalPath = path.toString().toLowerCase().endsWith(".png") ? path : Path.of(path + ".png");
+			try {
+				MinimapData.INSTANCE.exportCompositeAsPng(finalPath);
+				exportPngButton.setMessage(Text.literal("Exported!"));
+			} catch (IOException e) {
+				e.printStackTrace();
+				exportPngButton.setMessage(Text.literal("Failed!"));
+			}
+			exportPngFeedbackUntil = System.currentTimeMillis() + 2000;
+		});
+	}
+
+	private void importPng() {
+		String defaultPath = MinimapData.INSTANCE.exportsDir().toString() + File.separator;
+		openLoadDialog("Import PNG (128x128)", defaultPath, new String[]{"*.png"}, "PNG (*.png)", path -> {
+			String layerName = path.getFileName().toString().replaceFirst("(?i)\\.png$", "");
+			MinimapData.ImportResult result = MinimapData.INSTANCE.importPngAsNewLayer(path, layerName);
+
+			switch (result) {
+				case OK -> {
+					clearChildren();
+					init();
+					importPngButton.setMessage(Text.literal("Imported!"));
+				}
+				case WRONG_SIZE -> importPngButton.setMessage(Text.literal("Wrong size!"));
+				case MAX_LAYERS -> importPngButton.setMessage(Text.literal("Max layers reached!"));
+				case READ_ERROR -> importPngButton.setMessage(Text.literal("Failed!"));
+			}
+			importPngFeedbackUntil = System.currentTimeMillis() + 2000;
+		});
+	}
+
+	private void exportProject() {
+		String defaultPath = MinimapData.INSTANCE.exportsDir().resolve("project.ccmap").toString();
+		openSaveDialog("Export project", defaultPath, new String[]{"*.ccmap"}, "Cartographers Canvas Projects (*.ccmap)", path -> {
+			Path finalPath = path.toString().toLowerCase().endsWith(".ccmap") ? path : Path.of(path + ".ccmap");
+			MinimapData.INSTANCE.save(finalPath);
+			exportProjectButton.setMessage(Text.literal("Exported!"));
+			exportProjectFeedbackUntil = System.currentTimeMillis() + 2000;
+		});
+	}
+
+	private void importProject() {
+		String defaultPath = MinimapData.INSTANCE.exportsDir().toString() + File.separator;
+		openLoadDialog("Import project", defaultPath, new String[]{"*.ccmap"}, "Cartographers Canvas Projects (*.ccmap)", path -> {
+			if (!Files.exists(path)) {
+				importProjectButton.setMessage(Text.literal("Not found!"));
+			} else {
+				MinimapData.INSTANCE.load(path);
+				undoStack.clear();
+				redoStack.clear();
+				hasSelection = false;
+				clearChildren();
+				init();
+				importProjectButton.setMessage(Text.literal("Imported!"));
+			}
+			importProjectFeedbackUntil = System.currentTimeMillis() + 2000;
+		});
+	}
+
+
+	private int initLayerPanel(int x, int startY) {
+		int cursorY = startY;
+
+		ButtonWidget addButton = ButtonWidget.builder(Text.literal("+ Layer"), b -> addLayer())
 				.dimensions(x, cursorY, LEFT_COLUMN_WIDTH, SIDE_BUTTON_HEIGHT).build();
 		addButton.active = MinimapData.INSTANCE.layers.size() < MinimapData.MAX_LAYERS;
 		addRightWidget(addButton);
 		cursorY += SIDE_BUTTON_HEIGHT + SIDE_BUTTON_GAP;
 
-		ButtonWidget deleteButton = ButtonWidget.builder(Text.literal("Ebene loeschen"), b -> deleteActiveLayer())
+		ButtonWidget deleteButton = ButtonWidget.builder(Text.literal("Delete layer"), b -> deleteActiveLayer())
 				.dimensions(x, cursorY, LEFT_COLUMN_WIDTH, SIDE_BUTTON_HEIGHT).build();
 		deleteButton.active = MinimapData.INSTANCE.layers.size() > 1;
 		addRightWidget(deleteButton);
@@ -478,7 +617,7 @@ public class MinimapScreen extends Screen {
 			int index = i;
 			MinimapData.Layer layer = layers.get(i);
 
-			ButtonWidget toggle = ButtonWidget.builder(Text.literal(layer.visible ? "An" : "Aus"), b -> toggleLayerVisibility(index))
+			ButtonWidget toggle = ButtonWidget.builder(Text.literal(layer.visible ? "On" : "Off"), b -> toggleLayerVisibility(index))
 					.dimensions(x, cursorY, toggleWidth, SIDE_BUTTON_HEIGHT).build();
 			addRightWidget(toggle);
 
@@ -489,6 +628,8 @@ public class MinimapScreen extends Screen {
 
 			cursorY += SIDE_BUTTON_HEIGHT + SIDE_BUTTON_GAP;
 		}
+
+		return cursorY;
 	}
 
 	private void resetProject() {
@@ -552,7 +693,7 @@ public class MinimapScreen extends Screen {
 
 		cursorY += swatchSize + 4;
 
-		primaryButton = ButtonWidget.builder(Text.literal("Primaer"), b -> {
+		primaryButton = ButtonWidget.builder(Text.literal("Primary"), b -> {
 			activeSlot = ColorSlot.PRIMARY;
 			syncPickerToActiveSlot();
 			updateSlotButtonLabels();
@@ -560,7 +701,7 @@ public class MinimapScreen extends Screen {
 			resetClearButtonLabel();
 		}).dimensions(primaryBtnX, cursorY, halfButtonWidth, SIDE_BUTTON_HEIGHT).build();
 
-		secondaryButton = ButtonWidget.builder(Text.literal("Sekundaer"), b -> {
+		secondaryButton = ButtonWidget.builder(Text.literal("Secondary"), b -> {
 			activeSlot = ColorSlot.SECONDARY;
 			syncPickerToActiveSlot();
 			updateSlotButtonLabels();
@@ -623,7 +764,7 @@ public class MinimapScreen extends Screen {
 	}
 
 	private void resetClearButtonLabel() {
-		if (clearButton != null) clearButton.setMessage(Text.literal("Leeren"));
+		if (clearButton != null) clearButton.setMessage(Text.literal("Clear"));
 	}
 
 	private int getActiveR() {
@@ -728,8 +869,8 @@ public class MinimapScreen extends Screen {
 	}
 
 	private void updateSlotButtonLabels() {
-		primaryButton.setMessage(Text.literal(activeSlot == ColorSlot.PRIMARY ? "Primaer *" : "Primaer"));
-		secondaryButton.setMessage(Text.literal(activeSlot == ColorSlot.SECONDARY ? "Sekund. *" : "Sekundaer"));
+		primaryButton.setMessage(Text.literal(activeSlot == ColorSlot.PRIMARY ? "Primary *" : "Primary"));
+		secondaryButton.setMessage(Text.literal(activeSlot == ColorSlot.SECONDARY ? "Secondary *" : "Secondary"));
 	}
 
 	private void updateColors() {
@@ -830,8 +971,28 @@ public class MinimapScreen extends Screen {
 		drawPastePreview(context, mouseX, mouseY);
 
 		if (saveButton != null && saveFeedbackUntil != 0 && System.currentTimeMillis() > saveFeedbackUntil) {
-			saveButton.setMessage(Text.literal("Speichern"));
+			saveButton.setMessage(Text.literal("Save"));
 			saveFeedbackUntil = 0;
+		}
+
+		if (exportPngButton != null && exportPngFeedbackUntil != 0 && System.currentTimeMillis() > exportPngFeedbackUntil) {
+			exportPngButton.setMessage(Text.literal("Export as PNG"));
+			exportPngFeedbackUntil = 0;
+		}
+
+		if (importPngButton != null && importPngFeedbackUntil != 0 && System.currentTimeMillis() > importPngFeedbackUntil) {
+			importPngButton.setMessage(Text.literal("Import PNG"));
+			importPngFeedbackUntil = 0;
+		}
+
+		if (exportProjectButton != null && exportProjectFeedbackUntil != 0 && System.currentTimeMillis() > exportProjectFeedbackUntil) {
+			exportProjectButton.setMessage(Text.literal("Export project"));
+			exportProjectFeedbackUntil = 0;
+		}
+
+		if (importProjectButton != null && importProjectFeedbackUntil != 0 && System.currentTimeMillis() > importProjectFeedbackUntil) {
+			importProjectButton.setMessage(Text.literal("Import project"));
+			importProjectFeedbackUntil = 0;
 		}
 
 		handleInput(mouseX, mouseY);
@@ -1541,13 +1702,13 @@ public class MinimapScreen extends Screen {
 		private final IntConsumer onChange;
 
 		public BrushSizeSlider(int x, int y, int width, int height, int initialValue, IntConsumer onChange) {
-			super(x, y, width, height, Text.literal("Pinselgroesse: " + initialValue), (initialValue - 1) / 9.0);
+			super(x, y, width, height, Text.literal("Brush size: " + initialValue), (initialValue - 1) / 9.0);
 			this.onChange = onChange;
 		}
 
 		@Override
 		protected void updateMessage() {
-			setMessage(Text.literal("Pinselgroesse: " + currentSize()));
+			setMessage(Text.literal("Brush size: " + currentSize()));
 		}
 
 		@Override

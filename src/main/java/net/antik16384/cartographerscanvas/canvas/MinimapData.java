@@ -2,6 +2,8 @@ package net.antik16384.cartographerscanvas.canvas;
 
 import net.fabricmc.loader.api.FabricLoader;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.DataInputStream;
@@ -12,11 +14,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Zentrale Datenhaltung für die Minimap: Ebenen, Compositing sowie Speichern/Laden.
- * Wird sowohl vom Editor (MinimapScreen) als auch vom HUD-Renderer benutzt,
- * damit beide immer denselben Stand sehen.
- */
 public class MinimapData {
 
 	public static final MinimapData INSTANCE = new MinimapData();
@@ -39,8 +36,8 @@ public class MinimapData {
 	public final List<Layer> layers = new ArrayList<>();
 	public int activeLayerIndex = 0;
 
-	private MinimapData() {
-		layers.add(new Layer(new MinimapCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), "Ebene 1"));
+	public MinimapData() {
+		layers.add(new Layer(new MinimapCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), "Layer 1"));
 	}
 
 	public Layer activeLayer() {
@@ -53,13 +50,13 @@ public class MinimapData {
 
 	public void renumberLayers() {
 		for (int i = 0; i < layers.size(); i++) {
-			layers.get(i).name = "Ebene " + (i + 1);
+			layers.get(i).name = "Layer " + (i + 1);
 		}
 	}
 
 	public void reset() {
 		layers.clear();
-		layers.add(new Layer(new MinimapCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), "Ebene 1"));
+		layers.add(new Layer(new MinimapCanvas(CANVAS_WIDTH, CANVAS_HEIGHT), "Layer 1"));
 		activeLayerIndex = 0;
 	}
 
@@ -104,13 +101,29 @@ public class MinimapData {
 		return (a << 24) | (r << 16) | (g << 8) | b;
 	}
 
+	private Path getConfigDir() {
+		return FabricLoader.getInstance().getConfigDir().resolve("cartographerscanvas");
+	}
+
 	private Path getSaveFilePath() {
-		return FabricLoader.getInstance().getConfigDir().resolve("cartographerscanvas").resolve("autosave.dat");
+		return getConfigDir().resolve("autosave.dat");
+	}
+
+	public Path exportsDir() {
+		return getConfigDir().resolve("exports");
 	}
 
 	public void save() {
+		save(getSaveFilePath());
+	}
+
+	public void load() {
+		load(getSaveFilePath());
+	}
+
+
+	public void save(Path path) {
 		try {
-			Path path = getSaveFilePath();
 			Files.createDirectories(path.getParent());
 			try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(path)))) {
 				out.writeInt(CANVAS_WIDTH);
@@ -132,8 +145,7 @@ public class MinimapData {
 		}
 	}
 
-	public void load() {
-		Path path = getSaveFilePath();
+	public void load(Path path) {
 		if (!Files.exists(path)) return;
 
 		try (DataInputStream in = new DataInputStream(new BufferedInputStream(Files.newInputStream(path)))) {
@@ -168,5 +180,48 @@ public class MinimapData {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
+	}
+
+	public void exportCompositeAsPng(Path path) throws IOException {
+		Files.createDirectories(path.getParent());
+		BufferedImage image = new BufferedImage(CANVAS_WIDTH, CANVAS_HEIGHT, BufferedImage.TYPE_INT_ARGB);
+		for (int y = 0; y < CANVAS_HEIGHT; y++) {
+			for (int x = 0; x < CANVAS_WIDTH; x++) {
+				image.setRGB(x, y, compositePixel(x, y));
+			}
+		}
+		if (!ImageIO.write(image, "png", path.toFile())) {
+			throw new IOException("No PNG writer available");
+		}
+	}
+
+	public enum ImportResult { OK, WRONG_SIZE, MAX_LAYERS, READ_ERROR }
+
+	public ImportResult importPngAsNewLayer(Path path, String layerName) {
+		if (layers.size() >= MAX_LAYERS) return ImportResult.MAX_LAYERS;
+
+		BufferedImage image;
+		try {
+			image = ImageIO.read(path.toFile());
+		} catch (IOException e) {
+			e.printStackTrace();
+			return ImportResult.READ_ERROR;
+		}
+		if (image == null) return ImportResult.READ_ERROR;
+		if (image.getWidth() != CANVAS_WIDTH || image.getHeight() != CANVAS_HEIGHT) {
+			return ImportResult.WRONG_SIZE;
+		}
+
+		MinimapCanvas canvas = new MinimapCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+		for (int y = 0; y < CANVAS_HEIGHT; y++) {
+			for (int x = 0; x < CANVAS_WIDTH; x++) {
+				canvas.setPixel(x, y, image.getRGB(x, y));
+			}
+		}
+
+		layers.add(new Layer(canvas, layerName));
+		renumberLayers();
+		activeLayerIndex = layers.size() - 1;
+		return ImportResult.OK;
 	}
 }

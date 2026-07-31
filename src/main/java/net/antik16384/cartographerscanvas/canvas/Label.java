@@ -14,3 +14,4 @@ public class Label {
 		this.color = color;
 	}
 }
+// can't be bothered to make this

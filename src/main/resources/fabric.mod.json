@@ -16,6 +16,9 @@
 	"entrypoints": {
 		"client": [
 			"net.antik16384.cartographerscanvas.CartographersCanvas"
+		],
+		"modmenu": [
+			"net.antik16384.cartographerscanvas.ModMenuIntegration"
 		]
 	},
 	"depends": {
@@ -23,5 +26,8 @@
 		"minecraft": "~1.21.11",
 		"java": ">=21",
 		"fabric-api": "*"
+	},
+	"suggests": {
+		"modmenu": "*"
 	}
 }

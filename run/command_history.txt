@@ -3,3 +3,10 @@
 /time set noon
 /gamerule advance_weather false
 /weather clear
+/cartographerscanvas config
+/cartographerscanvas editor
+/cartographerscanvas library
+/cartographerscanvas settings
+/cartographerscanvas config
+/cartographerscanvas library
+/cartographerscanvas config
